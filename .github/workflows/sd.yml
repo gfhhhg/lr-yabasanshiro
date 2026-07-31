@@ -82,53 +82,74 @@ jobs:
   # Android 构建任务
   # ============================================================
   android:
-    name: Android (${{ matrix.abi }})
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' || 
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'workflow_dispatch' && inputs.build_android == true)
-    strategy:
-      fail-fast: false
-      matrix:
-        abi: 
-          - arm64-v8a
-          - armeabi-v7a
-          - x86_64
-    steps:
-      - uses: actions/checkout@v4
+  name: Android (${{ matrix.abi }})
+  runs-on: ubuntu-latest
+  if: |
+    github.event_name == 'push' || 
+    github.event_name == 'pull_request' ||
+    (github.event_name == 'workflow_dispatch' && inputs.build_android == true)
+  strategy:
+    fail-fast: false
+    matrix:
+      abi: 
+        - arm64-v8a
+        - armeabi-v7a
+        - x86_64
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential nasm \
-            zlib1g-dev libflac-dev liblzma-dev libzstd-dev
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential nasm \
+          zlib1g-dev libflac-dev liblzma-dev libzstd-dev
 
-      - name: Setup Android NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26c
-          add-to-path: true
+    - name: Setup Android NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26c
+        add-to-path: true
 
-      - name: Build Android core (${{ matrix.abi }})
-        working-directory: src/libretro
-        run: |
-          make -f Makefile \
-            platform=android \
-            APP_ABI=${{ matrix.abi }} \
-            -j$(nproc)
+    - name: Build Android core (${{ matrix.abi }})
+      working-directory: src/libretro
+      run: |
+        # 关键：必须同时设置 platform 和 ABI
+        make -f Makefile \
+          platform=android \
+          APP_ABI=${{ matrix.abi }} \
+          TARGET_ARCH=${{ matrix.abi == 'arm64-v8a' && 'arm64' || matrix.abi == 'armeabi-v7a' && 'arm' || 'x86_64' }} \
+          -j$(nproc)
 
-      - name: Verify artifact
-        run: |
+    - name: Verify and rename artifact
+      run: |
+        # 查找生成的 .so 文件（可能在不同位置）
+        find src -name "*.so" -type f
+        # 尝试常见的输出路径
+        SO_FILE=""
+        if [ -f "src/libretro/yabasanshiro_libretro_android.so" ]; then
           SO_FILE="src/libretro/yabasanshiro_libretro_android.so"
-          test -f "$SO_FILE"
-          file "$SO_FILE"
+        elif [ -f "src/libretro/yabasanshiro_libretro.so" ]; then
+          SO_FILE="src/libretro/yabasanshiro_libretro.so"
+        elif [ -f "yabasanshiro_libretro_android.so" ]; then
+          SO_FILE="yabasanshiro_libretro_android.so"
+        fi
+        
+        if [ -z "$SO_FILE" ]; then
+          echo "❌ No .so file found!"
+          find . -name "*.so" -type f || true
+          exit 1
+        fi
+        
+        echo "✅ Found: $SO_FILE"
+        file "$SO_FILE"
+        # 统一重命名
+        cp "$SO_FILE" "yabasanshiro_libretro_android_${{ matrix.abi }}.so"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: yabasanshiro_libretro_android_${{ matrix.abi }}
-          path: src/libretro/yabasanshiro_libretro_android.so
+    - uses: actions/upload-artifact@v4
+      with:
+        name: yabasanshiro_libretro_android_${{ matrix.abi }}
+        path: yabasanshiro_libretro_android_${{ matrix.abi }}.so
 
   # ============================================================
   # 汇总 Release 附件
