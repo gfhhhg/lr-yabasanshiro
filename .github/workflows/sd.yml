@@ -82,12 +82,12 @@ jobs:
   # Android 构建任务
   # ============================================================
   android:
-  name: Android (${{ matrix.abi }})
-  runs-on: ubuntu-latest
+    name: Android (${{ matrix.abi }})
+    runs-on: ubuntu-latest
   if: |
-    github.event_name == 'push' || 
-    github.event_name == 'pull_request' ||
-    (github.event_name == 'workflow_dispatch' && inputs.build_android == true)
+     github.event_name == 'push' || 
+     github.event_name == 'pull_request' ||
+   (github.event_name == 'workflow_dispatch' && inputs.build_android == true)
   strategy:
     fail-fast: false
     matrix:
