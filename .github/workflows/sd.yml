@@ -15,42 +15,39 @@ on:
         description: 'Build Android version'
         type: boolean
         default: true
-      linux_arch:
-        description: 'Linux architectures (comma separated)'
-        type: string
-        default: 'x86_64,aarch64'
-      android_abi:
-        description: 'Android ABIs (comma separated)'
-        type: string
-        default: 'arm64-v8a,armeabi-v7a,x86_64'
 
 jobs:
-  # ============================================================
-  # Linux 构建任务
-  # ============================================================
   linux:
     name: Linux (${{ matrix.arch }} - ${{ matrix.variant }})
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     if: |
-      github.event_name == 'push' || 
+      github.event_name == 'push' ||
       github.event_name == 'pull_request' ||
       (github.event_name == 'workflow_dispatch' && inputs.build_linux == true)
     strategy:
       fail-fast: false
       matrix:
-        arch: 
-          - x86_64
-          - aarch64
-        variant: 
-          - { name: vulkan, make: "HAVE_VULKAN=1" }
-          - { name: opengl, make: "" }
-          - { name: gles, make: "FORCE_GLES=1 HAVE_VULKAN=0" }
-        # 允许通过 workflow_dispatch 过滤架构
-        exclude:
+        arch: [x86_64, aarch64]
+        variant: [vulkan, opengl, gles]
+        include:
+          - arch: x86_64
+            variant: vulkan
+            make_params: HAVE_VULKAN=1
+          - arch: x86_64
+            variant: opengl
+            make_params: ""
+          - arch: x86_64
+            variant: gles
+            make_params: FORCE_GLES=1 HAVE_VULKAN=0
           - arch: aarch64
-            variant: { name: opengl, make: "" }
+            variant: vulkan
+            make_params: HAVE_VULKAN=1
           - arch: aarch64
-            variant: { name: gles, make: "FORCE_GLES=1 HAVE_VULKAN=0" }
+            variant: opengl
+            make_params: ""
+          - arch: aarch64
+            variant: gles
+            make_params: FORCE_GLES=1 HAVE_VULKAN=0
     steps:
       - uses: actions/checkout@v4
 
@@ -63,10 +60,10 @@ jobs:
             libgl1-mesa-dev libgles2-mesa-dev \
             libvulkan-dev libshaderc-dev
 
-      - name: Build (${{ matrix.arch }} - ${{ matrix.variant.name }})
+      - name: Build
         run: |
           make clean
-          make ${{ matrix.variant.make }} -j$(nproc)
+          make ${{ matrix.make_params }} -j$(nproc)
 
       - name: Verify artifact
         run: |
@@ -75,85 +72,68 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: yabasanshiro_libretro_linux_${{ matrix.arch }}_${{ matrix.variant.name }}
+          name: yabasanshiro_linux_${{ matrix.arch }}_${{ matrix.variant }}
           path: yabasanshiro_libretro.so
 
-  # ============================================================
-  # Android 构建任务
-  # ============================================================
   android:
     name: Android (${{ matrix.abi }})
     runs-on: ubuntu-latest
-  if: |
-     github.event_name == 'push' || 
-     github.event_name == 'pull_request' ||
-   (github.event_name == 'workflow_dispatch' && inputs.build_android == true)
-  strategy:
-    fail-fast: false
-    matrix:
-      abi: 
-        - arm64-v8a
-        - armeabi-v7a
-        - x86_64
-  steps:
-    - uses: actions/checkout@v4
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_android == true)
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    steps:
+      - uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential nasm \
-          zlib1g-dev libflac-dev liblzma-dev libzstd-dev
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential nasm \
+            zlib1g-dev libflac-dev liblzma-dev libzstd-dev
 
-    - name: Setup Android NDK
-      uses: nttld/setup-ndk@v1
-      with:
-        ndk-version: r26c
-        add-to-path: true
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26c
+          add-to-path: true
 
-    - name: Build Android core (${{ matrix.abi }})
-      working-directory: src/libretro
-      run: |
-        # 关键：必须同时设置 platform 和 ABI
-        make -f Makefile \
-          platform=android \
-          APP_ABI=${{ matrix.abi }} \
-          TARGET_ARCH=${{ matrix.abi == 'arm64-v8a' && 'arm64' || matrix.abi == 'armeabi-v7a' && 'arm' || 'x86_64' }} \
-          -j$(nproc)
+      - name: Build Android core
+        working-directory: src/libretro
+        run: |
+          export ANDROID_NDK_HOME=$ANDROID_NDK
+          make -f Makefile platform=android APP_ABI=${{ matrix.abi }} -j$(nproc)
 
-    - name: Verify and rename artifact
-      run: |
-        # 查找生成的 .so 文件（可能在不同位置）
-        find src -name "*.so" -type f
-        # 尝试常见的输出路径
-        SO_FILE=""
-        if [ -f "src/libretro/yabasanshiro_libretro_android.so" ]; then
-          SO_FILE="src/libretro/yabasanshiro_libretro_android.so"
-        elif [ -f "src/libretro/yabasanshiro_libretro.so" ]; then
-          SO_FILE="src/libretro/yabasanshiro_libretro.so"
-        elif [ -f "yabasanshiro_libretro_android.so" ]; then
-          SO_FILE="yabasanshiro_libretro_android.so"
-        fi
-        
-        if [ -z "$SO_FILE" ]; then
-          echo "❌ No .so file found!"
-          find . -name "*.so" -type f || true
-          exit 1
-        fi
-        
-        echo "✅ Found: $SO_FILE"
-        file "$SO_FILE"
-        # 统一重命名
-        cp "$SO_FILE" "yabasanshiro_libretro_android_${{ matrix.abi }}.so"
+      - name: Find and rename artifact
+        run: |
+          SO_FILE=""
+          if [ -f "src/libretro/yabasanshiro_libretro_android.so" ]; then
+            SO_FILE="src/libretro/yabasanshiro_libretro_android.so"
+          elif [ -f "src/libretro/yabasanshiro_libretro.so" ]; then
+            SO_FILE="src/libretro/yabasanshiro_libretro.so"
+          elif [ -f "yabasanshiro_libretro_android.so" ]; then
+            SO_FILE="yabasanshiro_libretro_android.so"
+          fi
+          
+          if [ -z "$SO_FILE" ]; then
+            echo "Error: No .so file found!"
+            find . -name "*.so" -type f 2>/dev/null || true
+            exit 1
+          fi
+          
+          echo "Found: $SO_FILE"
+          file "$SO_FILE"
+          cp "$SO_FILE" "yabasanshiro_android_${{ matrix.abi }}.so"
 
-    - uses: actions/upload-artifact@v4
-      with:
-        name: yabasanshiro_libretro_android_${{ matrix.abi }}
-        path: yabasanshiro_libretro_android_${{ matrix.abi }}.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yabasanshiro_android_${{ matrix.abi }}
+          path: yabasanshiro_android_${{ matrix.abi }}.so
 
-  # ============================================================
-  # 汇总 Release 附件
-  # ============================================================
   release:
     name: Prepare Release Assets
     runs-on: ubuntu-latest
@@ -164,28 +144,15 @@ jobs:
         with:
           path: artifacts
 
-      - name: List artifacts
-        run: |
-          find artifacts -type f
-          
-      - name: Create release tarball
+      - name: List and organize artifacts
         run: |
           mkdir -p release_assets
-          # 重命名 Linux 核心
-          for f in artifacts/yabasanshiro_libretro_linux_*/yabasanshiro_libretro.so; do
-            if [ -f "$f" ]; then
-              dirname=$(basename $(dirname $f))
-              cp "$f" "release_assets/${dirname}.so"
-            fi
+          find artifacts -type f -name "*.so" | while read -r file; do
+            basename=$(basename "$file")
+            cp "$file" "release_assets/${basename}"
           done
-          # 重命名 Android 核心
-          for f in artifacts/yabasanshiro_libretro_android_*/yabasanshiro_libretro_android.so; do
-            if [ -f "$f" ]; then
-              dirname=$(basename $(dirname $f))
-              cp "$f" "release_assets/${dirname}.so"
-            fi
-          done
-          
+          ls -la release_assets/
+
       - uses: actions/upload-artifact@v4
         with:
           name: release-assets
