@@ -85,46 +85,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: [arm64-v8a, armeabi-v7a, x86_64]
+        abi: [arm64-v8a, armeabi-v7a]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential nasm \
-            zlib1g-dev libflac-dev liblzma-dev libzstd-dev
 
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r26c
+          ndk-version: r23c
           add-to-path: true
 
-      - name: Build Android core
-        working-directory: src/libretro
+      - name: Build with ndk-build
+        working-directory: src/libretro/jni
         run: |
-          export ANDROID_NDK_HOME=$ANDROID_NDK
-          make -f Makefile platform=android APP_ABI=${{ matrix.abi }} -j$(nproc)
+          ndk-build APP_ABI=${{ matrix.abi }} -j$(nproc)
 
       - name: Find and rename artifact
         run: |
-          SO_FILE=""
-          if [ -f "src/libretro/yabasanshiro_libretro_android.so" ]; then
-            SO_FILE="src/libretro/yabasanshiro_libretro_android.so"
-          elif [ -f "src/libretro/yabasanshiro_libretro.so" ]; then
-            SO_FILE="src/libretro/yabasanshiro_libretro.so"
-          elif [ -f "yabasanshiro_libretro_android.so" ]; then
-            SO_FILE="yabasanshiro_libretro_android.so"
-          fi
-          
-          if [ -z "$SO_FILE" ]; then
-            echo "Error: No .so file found!"
-            find . -name "*.so" -type f 2>/dev/null || true
+          SO_FILE="src/libretro/libs/${{ matrix.abi }}/libretro.so"
+          if [ ! -f "$SO_FILE" ]; then
+            echo "Error: .so file not found at $SO_FILE"
+            echo "Searching for any .so files..."
+            find src/libretro -name "*.so" -type f 2>/dev/null || true
             exit 1
           fi
-          
           echo "Found: $SO_FILE"
           file "$SO_FILE"
           cp "$SO_FILE" "yabasanshiro_android_${{ matrix.abi }}.so"
